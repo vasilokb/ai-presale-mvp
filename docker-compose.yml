@@ -40,7 +40,7 @@
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: uploads
       OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: llama3.1
+      OLLAMA_MODEL: NeuralNet/openchat-3.6:latest
     ports:
       - "8080:8080"
     depends_on:
@@ -59,7 +59,7 @@
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: uploads
       OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: llama3.1
+      OLLAMA_MODEL: NeuralNet/openchat-3.6:latest
     command: ["python","-m","app.worker"]
     depends_on:
       - postgres

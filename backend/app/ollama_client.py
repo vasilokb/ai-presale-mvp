@@ -15,13 +15,31 @@ def build_prompt(user_prompt: str, schema_text: str) -> str:
     )
 
 
+def _extract_chat_text(payload: dict) -> str:
+    message = payload.get("message") or {}
+    return message.get("content", "")
+
+
+def _extract_generate_text(payload: dict) -> str:
+    return payload.get("response", "")
+
+
 def call_ollama(prompt: str) -> str:
-    url = f"{settings.ollama_url}/api/generate"
-    payload = {"model": settings.ollama_model, "prompt": prompt, "stream": False}
-    response = httpx.post(url, json=payload, timeout=120)
-    response.raise_for_status()
-    data = response.json()
-    return data.get("response", "")
+    chat_url = f"{settings.ollama_url}/api/chat"
+    chat_payload = {
+        "model": settings.ollama_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+    }
+    chat_response = httpx.post(chat_url, json=chat_payload, timeout=120)
+    if chat_response.status_code == 200:
+        return _extract_chat_text(chat_response.json())
+
+    generate_url = f"{settings.ollama_url}/api/generate"
+    generate_payload = {"model": settings.ollama_model, "prompt": prompt, "stream": False}
+    generate_response = httpx.post(generate_url, json=generate_payload, timeout=120)
+    generate_response.raise_for_status()
+    return _extract_generate_text(generate_response.json())
 
 
 def parse_llm_json(raw_text: str) -> dict:

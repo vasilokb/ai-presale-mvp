@@ -1,10 +1,13 @@
 ﻿import json
+import logging
 import time
+import traceback
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
 from docx import Document as DocxDocument
+import httpx
 from jsonschema import ValidationError, validate
 from pypdf import PdfReader
 from sqlalchemy import select
@@ -84,81 +87,89 @@ def process_document(document_id: str) -> None:
         document = db.get(Document, document_id)
         if not document:
             return
-        files = db.scalars(select(FileRecord).where(FileRecord.presale_id == document.presale_id)).all()
-        client = get_s3_client()
-        ensure_bucket(client, settings.minio_bucket)
+        try:
+            files = db.scalars(select(FileRecord).where(FileRecord.presale_id == document.presale_id)).all()
+            client = get_s3_client()
+            ensure_bucket(client, settings.minio_bucket)
 
-        extracted_sections = []
-        for record in files:
-            response = client.get_object(Bucket=settings.minio_bucket, Key=record.storage_key)
-            content = response["Body"].read()
-            filename = record.filename
-            ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+            extracted_sections = []
+            for record in files:
+                response = client.get_object(Bucket=settings.minio_bucket, Key=record.storage_key)
+                content = response["Body"].read()
+                filename = record.filename
+                ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
 
+                try:
+                    if ext == "pdf":
+                        text = extract_pdf_text(content)
+                        if not text.strip():
+                            update_document_status(
+                                db, document, "error", 100, "scanned pdf not supported in MVP"
+                            )
+                            return
+                    elif ext == "docx":
+                        text = extract_docx_text(content)
+                    elif ext == "txt":
+                        text = extract_txt_text(content)
+                    else:
+                        text = ""
+                except ValueError as exc:
+                    update_document_status(db, document, "error", 100, str(exc))
+                    return
+
+                extracted_sections.append(f"----- FILE: {filename} -----\n{text}")
+
+            update_document_status(db, document, "running", 30, "calling_llm")
+            schema_text = load_schema_text()
+            combined_text = "\n\n".join(extracted_sections)
+            prompt = build_prompt(f"{document.prompt}\n\n{combined_text}", schema_text)
             try:
-                if ext == "pdf":
-                    text = extract_pdf_text(content)
-                    if not text.strip():
-                        update_document_status(
-                            db, document, "error", 100, "scanned pdf not supported in MVP"
-                        )
-                        return
-                elif ext == "docx":
-                    text = extract_docx_text(content)
-                elif ext == "txt":
-                    text = extract_txt_text(content)
-                else:
-                    text = ""
-            except ValueError as exc:
-                update_document_status(db, document, "error", 100, str(exc))
+                llm_json = call_llm_with_retry(prompt)
+            except json.JSONDecodeError:
+                update_document_status(db, document, "error", 100, "llm_invalid_json")
+                return
+            except httpx.HTTPError:
+                update_document_status(db, document, "error", 100, "llm_http_error")
                 return
 
-            extracted_sections.append(f"----- FILE: {filename} -----\n{text}")
+            schema = load_schema()
+            try:
+                validate(instance=llm_json, schema=schema)
+            except ValidationError:
+                update_document_status(db, document, "error", 100, "llm_schema_validation_failed")
+                return
 
-        update_document_status(db, document, "running", 30, "calling_llm")
-        schema_text = load_schema_text()
-        combined_text = "\n\n".join(extracted_sections)
-        prompt = build_prompt(f"{document.prompt}\n\n{combined_text}", schema_text)
-        try:
-            llm_json = call_llm_with_retry(prompt)
-        except json.JSONDecodeError:
-            update_document_status(db, document, "error", 100, "llm_invalid_json")
-            return
+            round_to_hours = document.params_json.get("round_to_hours", 0.5)
+            total_expected = 0.0
+            for epic in llm_json.get("epics", []):
+                for task in epic.get("tasks", []):
+                    pert = task.get("pert_hours", {})
+                    optimistic = float(pert.get("optimistic", 0))
+                    most_likely = float(pert.get("most_likely", 0))
+                    pessimistic = float(pert.get("pessimistic", 0))
+                    expected = (optimistic + 4 * most_likely + pessimistic) / 6
+                    expected = round_to_step(expected, round_to_hours)
+                    pert["expected"] = round(expected, 2)
+                    total_expected += pert["expected"]
 
-        schema = load_schema()
-        try:
-            validate(instance=llm_json, schema=schema)
-        except ValidationError:
-            update_document_status(db, document, "error", 100, "llm_schema_validation_failed")
-            return
+            llm_json["totals"] = {"expected_hours": round(total_expected, 2)}
 
-        round_to_hours = document.params_json.get("round_to_hours", 0.5)
-        total_expected = 0.0
-        for epic in llm_json.get("epics", []):
-            for task in epic.get("tasks", []):
-                pert = task.get("pert_hours", {})
-                optimistic = float(pert.get("optimistic", 0))
-                most_likely = float(pert.get("most_likely", 0))
-                pessimistic = float(pert.get("pessimistic", 0))
-                expected = (optimistic + 4 * most_likely + pessimistic) / 6
-                expected = round_to_step(expected, round_to_hours)
-                pert["expected"] = round(expected, 2)
-                total_expected += pert["expected"]
+            update_document_status(db, document, "running", 90, "saving_result")
+            result = Result(
+                id=str(uuid4()),
+                document_id=document.id,
+                version=1,
+                llm_model=settings.ollama_model,
+                result_json=llm_json,
+            )
+            db.add(result)
+            db.commit()
 
-        llm_json["totals"] = {"expected_hours": round(total_expected, 2)}
-
-        update_document_status(db, document, "running", 90, "saving_result")
-        result = Result(
-            id=str(uuid4()),
-            document_id=document.id,
-            version=1,
-            llm_model=settings.ollama_model,
-            result_json=llm_json,
-        )
-        db.add(result)
-        db.commit()
-
-        update_document_status(db, document, "done", 100, "ok")
+            update_document_status(db, document, "done", 100, "ok")
+        except Exception:
+            logging.error("Worker error for document %s", document_id)
+            logging.error(traceback.format_exc())
+            update_document_status(db, document, "error", 100, "worker_error")
     finally:
         db.close()
 

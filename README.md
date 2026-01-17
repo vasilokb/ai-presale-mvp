@@ -39,6 +39,16 @@ curl -UseBasicParsing http://localhost:8080/api/v1/documents/$($doc.document_id)
 curl -UseBasicParsing http://localhost:8080/api/v1/documents/$($doc.document_id)/result
 ```
 
+## Ollama smoke check
+
+```powershell
+# Ensure model exists
+curl -UseBasicParsing http://localhost:11434/api/tags
+
+# Start analysis and verify it reaches done
+$status = curl -UseBasicParsing http://localhost:8080/api/v1/documents/$($doc.document_id)/status
+```
+
 ## Tests
 
 ```powershell
