@@ -31,7 +31,8 @@
 
   api:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://presale:presale@postgres:5432/presale
       MINIO_ENDPOINT: http://minio:9000
@@ -49,7 +50,8 @@
 
   worker:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://presale:presale@postgres:5432/presale
       MINIO_ENDPOINT: http://minio:9000
