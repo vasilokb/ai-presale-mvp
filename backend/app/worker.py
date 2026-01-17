@@ -15,7 +15,7 @@ from app.ollama_client import build_prompt, call_ollama, parse_llm_json
 from app.settings import settings
 from app.storage import ensure_bucket, get_s3_client
 
-SCHEMA_PATH = Path(__file__).resolve().parents[1].parent / "spec" / "json-schema" / "llm_output.schema.json"
+SCHEMA_PATH = Path(__file__).resolve().parents[1] / "spec" / "json-schema" / "llm_output.schema.json"
 
 
 def load_schema_text() -> str:
