@@ -1,0 +1,38 @@
+﻿{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LLM Output: Epics/Tasks/PERT",
+  "type": "object",
+  "required": ["epics"],
+  "properties": {
+    "epics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "tasks"],
+        "properties": {
+          "title": { "type": "string", "minLength": 1 },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["title", "role", "pert_hours"],
+              "properties": {
+                "title": { "type": "string", "minLength": 1 },
+                "role": { "type": "string", "enum": ["Backend","Frontend","BA","DevOps","Data"] },
+                "pert_hours": {
+                  "type": "object",
+                  "required": ["optimistic","most_likely","pessimistic"],
+                  "properties": {
+                    "optimistic": { "type": "number", "minimum": 0 },
+                    "most_likely": { "type": "number", "minimum": 0 },
+                    "pessimistic": { "type": "number", "minimum": 0 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

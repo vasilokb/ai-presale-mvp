@@ -1,0 +1,70 @@
+﻿services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: presale
+      POSTGRES_PASSWORD: presale
+      POSTGRES_DB: presale
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://presale:presale@postgres:5432/presale
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: uploads
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: llama3.1
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      - minio
+      - ollama
+
+  worker:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://presale:presale@postgres:5432/presale
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: uploads
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: llama3.1
+    command: ["python","-m","app.worker"]
+    depends_on:
+      - postgres
+      - minio
+      - ollama
+
+volumes:
+  pgdata:
+  miniodata:
+  ollama:
