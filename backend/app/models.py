@@ -47,7 +47,7 @@ class Document(Base):
     )
 
     presale = relationship("Presale", back_populates="documents")
-    result = relationship("Result", back_populates="document", uselist=False, cascade="all, delete-orphan")
+    results = relationship("Result", back_populates="document", cascade="all, delete-orphan")
 
 
 class Result(Base):
@@ -60,4 +60,4 @@ class Result(Base):
     result_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
-    document = relationship("Document", back_populates="result")
+    document = relationship("Document", back_populates="results")
