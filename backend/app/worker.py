@@ -22,7 +22,9 @@ SCHEMA_PATH = Path(__file__).resolve().parents[1] / "spec" / "json-schema" / "ll
 
 
 def load_schema_text() -> str:
-    return SCHEMA_PATH.read_text(encoding="utf-8-sig")
+    raw_bytes = SCHEMA_PATH.read_bytes()
+    text = raw_bytes.decode("utf-8-sig")
+    return text.lstrip("\ufeff")
 
 
 def load_schema() -> dict:

@@ -66,6 +66,15 @@
       - minio
       - ollama
 
+  ui:
+    image: nginx:alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - ./ui:/usr/share/nginx/html:ro
+    depends_on:
+      - api
+
 volumes:
   pgdata:
   miniodata:

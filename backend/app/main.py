@@ -3,10 +3,11 @@ from typing import Annotated
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Query, UploadFile
-from pydantic import BaseModel, Field
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+from sqlalchemy import desc, func, select
+from sqlalchemy.orm import Session
 
 from app.db import Base, engine, get_db
 from app.models import Document, File as FileRecord, Presale, Result
@@ -14,6 +15,48 @@ from app.storage import ensure_bucket, get_s3_client
 from app.settings import settings
 
 app = FastAPI(title="AI Presale MVP")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+
+def error_response(status_code: int, error: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": error})
+
+
+class PresaleCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+
+
+class PresaleResponse(BaseModel):
+    id: str
+    name: str
+    created_at: datetime
+
+
+class DocumentStartRequest(BaseModel):
+    presale_id: str
+    prompt: str
+    params: dict
+
+
+class DocumentStartResponse(BaseModel):
+    document_id: str
+    status: str
+
+
+class ResultVersionRequest(BaseModel):
+    result_json: dict
+
+
+@app.on_event("startup")
+def startup() -> None:
+    Base.metadata.create_all(bind=engine)
+
 
 
 def error_response(status_code: int, error: str) -> JSONResponse:
@@ -150,13 +193,20 @@ def get_status(document_id: str, db: Annotated[Session, Depends(get_db)]):
 
 
 @app.get("/api/v1/documents/{document_id}/result")
-def get_result(document_id: str, db: Annotated[Session, Depends(get_db)]):
+def get_result(
+    document_id: str, version: Annotated[int | None, Query(None)], db: Annotated[Session, Depends(get_db)]
+):
     document = db.get(Document, document_id)
     if not document:
         return error_response(404, "document_not_found")
     if document.status != "done":
         return error_response(409, "result_not_ready")
-    result = db.scalar(select(Result).where(Result.document_id == document_id))
+    query = select(Result).where(Result.document_id == document_id)
+    if version is not None:
+        query = query.where(Result.version == version)
+    else:
+        query = query.order_by(desc(Result.version))
+    result = db.scalar(query)
     if not result:
         return error_response(404, "document_not_found")
     return {
@@ -165,3 +215,44 @@ def get_result(document_id: str, db: Annotated[Session, Depends(get_db)]):
         "llm_model": result.llm_model,
         **result.result_json,
     }
+
+
+@app.get("/api/v1/documents")
+def list_documents(db: Annotated[Session, Depends(get_db)]):
+    documents = db.scalars(select(Document).order_by(desc(Document.created_at))).all()
+    return [
+        {
+            "document_id": document.id,
+            "presale_id": document.presale_id,
+            "status": document.status,
+            "progress": document.progress,
+            "message": document.message,
+            "created_at": document.created_at,
+        }
+        for document in documents
+    ]
+
+
+@app.post("/api/v1/documents/{document_id}/result/version")
+def create_result_version(
+    document_id: str, payload: ResultVersionRequest, db: Annotated[Session, Depends(get_db)]
+):
+    document = db.get(Document, document_id)
+    if not document:
+        return error_response(404, "document_not_found")
+    latest = db.scalar(
+        select(Result).where(Result.document_id == document_id).order_by(desc(Result.version))
+    )
+    if not latest:
+        return error_response(404, "document_not_found")
+    next_version = latest.version + 1
+    result = Result(
+        id=str(uuid4()),
+        document_id=document_id,
+        version=next_version,
+        llm_model=latest.llm_model,
+        result_json=payload.result_json,
+    )
+    db.add(result)
+    db.commit()
+    return {"document_id": document_id, "version": next_version}
