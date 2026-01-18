@@ -6,13 +6,48 @@ import httpx
 from app.settings import settings
 
 
+JSON_SKELETON = """{
+  "document_id": "string",
+  "version": 1,
+  "llm_model": "string",
+  "epics": [
+    {
+      "title": "string",
+      "tasks": [
+        {
+          "title": "string",
+          "role": "Backend",
+          "pert_hours": {
+            "optimistic": 1,
+            "most_likely": 2,
+            "pessimistic": 3,
+            "expected": 2.0
+          }
+        }
+      ]
+    }
+  ],
+  "totals": {
+    "expected_hours": 2.0
+  }
+}"""
+
+
 def build_prompt(user_prompt: str, schema_text: str) -> str:
     return (
-        "You are an assistant that must return ONLY valid JSON.\n"
+        "Return ONLY a single JSON object. No markdown. No comments. No explanations.\n"
+        "Output MUST start with '{' and end with '}'.\n"
+        "Do NOT add fields that are not in the schema.\n"
+        "Do NOT remove fields from the skeleton.\n"
+        "All numeric values must be numbers (no strings).\n"
+        "Do NOT use placeholder titles like \"Epic Title\" or \"Task Title\" — titles must be derived from the document text.\n"
+        "Roles allowed: \"SA/BA\", \"Backend\", \"Frontend\", \"Data-engineer\", \"DevOps\".\n"
+        "You MUST strictly follow this structure exactly as shown:\n"
+        f"{JSON_SKELETON}\n"
         "The JSON must strictly match this schema:\n"
         f"{schema_text}\n"
         f"User prompt: {user_prompt}\n"
-        "Return ONLY valid JSON. No markdown, no comments, no explanation."
+        "Return ONLY corrected JSON that matches the schema EXACTLY. No other text."
     )
 
 
@@ -131,4 +166,15 @@ def check_ollama_health() -> dict:
 
 
 def parse_llm_json(raw_text: str) -> dict:
-    return json.loads(raw_text)
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError:
+        start = raw_text.find("{")
+        end = raw_text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError("llm_no_json_found")
+        snippet = raw_text[start : end + 1]
+        try:
+            return json.loads(snippet)
+        except json.JSONDecodeError as exc:
+            raise ValueError("llm_invalid_json") from exc

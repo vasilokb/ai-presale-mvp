@@ -287,6 +287,7 @@ def get_result(
         "version": result.version,
         "llm_model": result.llm_model,
         "raw_llm_output": result.raw_llm_output,
+        "validation_error": result.validation_error,
         **result.result_json,
     }
 
@@ -329,6 +330,7 @@ def export_document_json(
                 "version": result.version,
                 "llm_model": result.llm_model,
                 "raw_llm_output": result.raw_llm_output,
+                "validation_error": result.validation_error,
                 **result.result_json,
             }
         ).body,

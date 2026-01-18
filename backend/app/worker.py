@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from app.db import Base, SessionLocal, engine
 from app.models import Document, File as FileRecord, Result
-from app.ollama_client import build_prompt, call_ollama, parse_llm_json
+from app.ollama_client import JSON_SKELETON, build_prompt, call_ollama, parse_llm_json
 from app.settings import settings
 from app.storage import ensure_bucket, get_s3_client
 
@@ -63,14 +63,10 @@ def extract_txt_text(content: bytes) -> str:
 def extract_json_object(text: str) -> dict:
     try:
         return parse_llm_json(text)
+    except ValueError as exc:
+        raise exc
     except json.JSONDecodeError:
-        pass
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        raise ValueError("llm_no_json_found")
-    snippet = text[start : end + 1]
-    return parse_llm_json(snippet)
+        raise ValueError("llm_invalid_json")
 
 
 def update_document_status(db, document: Document, status: str, progress: int, message: str) -> None:
@@ -143,6 +139,7 @@ def process_document(document_id: str) -> None:
             llm_json = None
             raw_output = None
             last_error = None
+            validation_error = None
             for attempt in range(3):
                 try:
                     raw_output = call_ollama(prompt)
@@ -165,10 +162,13 @@ def process_document(document_id: str) -> None:
                         break
                     except ValidationError:
                         last_error = "llm_schema_validation_failed"
+                        validation_error = "llm_schema_validation_failed"
 
                 repair_prompt = (
-                    "Fix the JSON to match the schema. Return ONLY valid JSON.\n"
+                    "Return ONLY corrected JSON that matches the schema EXACTLY. No other text.\n"
                     f"Schema:\n{schema_text}\n"
+                    "You MUST strictly follow this structure exactly as shown:\n"
+                    f"{JSON_SKELETON}\n"
                     f"Invalid output:\n{raw_output}\n"
                 )
                 prompt = repair_prompt
@@ -182,6 +182,7 @@ def process_document(document_id: str) -> None:
                     llm_model=settings.ollama_model,
                     result_json={"error": last_error or "llm_invalid_json"},
                     raw_llm_output=raw_output,
+                    validation_error=validation_error or last_error,
                 )
                 db.add(result)
                 db.commit()
@@ -198,6 +199,7 @@ def process_document(document_id: str) -> None:
                     llm_model=settings.ollama_model,
                     result_json={"error": "llm_schema_validation_failed"},
                     raw_llm_output=raw_output,
+                    validation_error="llm_schema_validation_failed",
                 )
                 db.add(result)
                 db.commit()
@@ -226,6 +228,7 @@ def process_document(document_id: str) -> None:
                 llm_model=settings.ollama_model,
                 result_json=llm_json,
                 raw_llm_output=raw_output,
+                validation_error=validation_error,
             )
             db.add(result)
             db.commit()
