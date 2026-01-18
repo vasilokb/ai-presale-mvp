@@ -3,12 +3,11 @@ from typing import Annotated
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
-from pathlib import Path
 
 from app.db import Base, engine, get_db
 from app.models import Document, File as FileRecord, Presale, Result
@@ -16,9 +15,13 @@ from app.storage import ensure_bucket, get_s3_client
 from app.settings import settings
 
 app = FastAPI(title="AI Presale MVP")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-UI_DIR = Path(__file__).resolve().parent / "ui"
-app.mount("/ui", StaticFiles(directory=UI_DIR, html=True), name="ui")
 
 
 def error_response(status_code: int, error: str) -> JSONResponse:

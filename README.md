@@ -15,6 +15,11 @@ Health check:
 curl -UseBasicParsing http://localhost:8080/health
 ```
 
+URLs:
+
+- API: http://localhost:8080
+- UI: http://localhost:3000
+
 ## Manual test (PowerShell)
 
 ```powershell
@@ -47,6 +52,16 @@ curl -UseBasicParsing http://localhost:11434/api/tags
 
 # Start analysis and verify it reaches done
 $status = curl -UseBasicParsing http://localhost:8080/api/v1/documents/$($doc.document_id)/status
+```
+
+## UI verification
+
+```powershell
+# Backend should not serve UI anymore (expect 404)
+curl -UseBasicParsing http://localhost:8080/ui
+
+# Open UI in browser
+Start-Process http://localhost:3000
 ```
 
 ## Tests
