@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>AI Presale MVP UI</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 24px;
+        color: #1f2937;
+      }
+      h1 {
+        margin-bottom: 8px;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        gap: 24px;
+        align-items: start;
+      }
+      .panel {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 16px;
+        background: #fff;
+      }
+      .doc-item {
+        padding: 8px;
+        border-radius: 6px;
+        cursor: pointer;
+        border: 1px solid transparent;
+      }
+      .doc-item.active {
+        background: #eef2ff;
+        border-color: #c7d2fe;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        border: 1px solid #e5e7eb;
+        padding: 8px;
+        text-align: left;
+      }
+      th {
+        background: #f9fafb;
+      }
+      .status {
+        margin-top: 12px;
+        color: #6b7280;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>AI Presale MVP</h1>
+    <div class="layout">
+      <div class="panel">
+        <h2>Documents</h2>
+        <div id="documents"></div>
+      </div>
+      <div class="panel">
+        <h2>Document Result</h2>
+        <div id="docMeta" class="status">Select a document.</div>
+        <div id="tableContainer"></div>
+      </div>
+    </div>
+    <script src="./app.js"></script>
+  </body>
+</html>
