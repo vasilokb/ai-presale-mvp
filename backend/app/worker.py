@@ -22,7 +22,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[1] / "spec" / "json-schema" / "ll
 
 
 def load_schema_text() -> str:
-    return SCHEMA_PATH.read_text(encoding="utf-8")
+    return SCHEMA_PATH.read_text(encoding="utf-8-sig")
 
 
 def load_schema() -> dict:
@@ -120,7 +120,11 @@ def process_document(document_id: str) -> None:
                 extracted_sections.append(f"----- FILE: {filename} -----\n{text}")
 
             update_document_status(db, document, "running", 30, "calling_llm")
-            schema_text = load_schema_text()
+            try:
+                schema_text = load_schema_text()
+            except (OSError, UnicodeError):
+                update_document_status(db, document, "error", 100, "schema_load_failed")
+                return
             combined_text = "\n\n".join(extracted_sections)
             prompt = build_prompt(f"{document.prompt}\n\n{combined_text}", schema_text)
             try:
@@ -132,7 +136,11 @@ def process_document(document_id: str) -> None:
                 update_document_status(db, document, "error", 100, "llm_http_error")
                 return
 
-            schema = load_schema()
+            try:
+                schema = load_schema()
+            except json.JSONDecodeError:
+                update_document_status(db, document, "error", 100, "schema_load_failed")
+                return
             try:
                 validate(instance=llm_json, schema=schema)
             except ValidationError:
@@ -169,7 +177,7 @@ def process_document(document_id: str) -> None:
         except Exception:
             logging.error("Worker error for document %s", document_id)
             logging.error(traceback.format_exc())
-            update_document_status(db, document, "error", 100, "worker_error")
+            update_document_status(db, document, "error", 100, "unexpected_error")
     finally:
         db.close()
 
