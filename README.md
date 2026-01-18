@@ -78,6 +78,18 @@ curl -UseBasicParsing http://localhost:8080/ui
 Start-Process http://localhost:3000
 ```
 
+## If LLM is slow: what to do
+
+1. Check Ollama availability:
+
+   ```powershell
+   curl -UseBasicParsing http://localhost:11434/api/tags
+   curl -UseBasicParsing http://localhost:8080/api/v1/llm/health
+   ```
+
+2. Expect longer runs on CPU. The worker uses a 10-minute timeout and retries; if it still fails, the UI shows the exact reason (e.g. timeout or HTTP 500).
+3. Reduce input size: upload smaller PDFs or shorten the prompt to speed up local inference.
+
 ## Acceptance checklist
 
 1. `http://localhost:3000` → список пресейлов из API.

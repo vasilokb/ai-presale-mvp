@@ -13,6 +13,7 @@ from starlette.responses import Response
 from app.db import Base, engine, get_db
 from app.models import Document, File as FileRecord, Presale, Result
 from app.storage import ensure_bucket, get_s3_client
+from app.ollama_client import check_ollama_health
 from app.settings import settings
 
 app = FastAPI(title="AI Presale MVP")
@@ -71,6 +72,11 @@ def startup() -> None:
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/v1/llm/health")
+def llm_health():
+    return check_ollama_health()
 
 
 @app.post("/api/v1/presales", response_model=PresaleResponse)

@@ -23,6 +23,8 @@ class DummyResponse:
 
 
 def test_call_ollama_uses_chat_when_available(monkeypatch):
+    monkeypatch.setattr(ollama_client, "wait_for_ollama_ready", lambda: None)
+
     def fake_post(url, json, timeout):
         if url.endswith("/api/chat"):
             return DummyResponse(200, {"message": {"content": "chat ok"}})
@@ -34,6 +36,8 @@ def test_call_ollama_uses_chat_when_available(monkeypatch):
 
 
 def test_call_ollama_falls_back_to_generate(monkeypatch):
+    monkeypatch.setattr(ollama_client, "wait_for_ollama_ready", lambda: None)
+
     def fake_post(url, json, timeout):
         if url.endswith("/api/chat"):
             return DummyResponse(404, {})

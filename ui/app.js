@@ -283,6 +283,7 @@ async function renderResultScreen(presaleId, documentId) {
       }
       if (status.status === "error") {
         clearInterval(interval);
+        statusEl.textContent = `Ошибка: ${status.message}`;
       }
     }, 2000);
   };

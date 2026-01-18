@@ -7,7 +7,6 @@ from pathlib import Path
 from uuid import uuid4
 
 from docx import Document as DocxDocument
-import httpx
 from jsonschema import ValidationError, validate
 from pypdf import PdfReader
 from sqlalchemy import select
@@ -83,6 +82,12 @@ def update_document_status(db, document: Document, status: str, progress: int, m
     db.commit()
 
 
+def limit_prompt_text(text: str, max_chars: int = 12000) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars]
+
+
 def process_document(document_id: str) -> None:
     db = SessionLocal()
     try:
@@ -128,14 +133,19 @@ def process_document(document_id: str) -> None:
                 update_document_status(db, document, "error", 100, "schema_load_failed")
                 return
             combined_text = "\n\n".join(extracted_sections)
+            combined_text = limit_prompt_text(combined_text, max_chars=12000)
             prompt = build_prompt(f"{document.prompt}\n\n{combined_text}", schema_text)
             try:
                 llm_json = call_llm_with_retry(prompt)
             except json.JSONDecodeError:
                 update_document_status(db, document, "error", 100, "llm_invalid_json")
                 return
-            except httpx.HTTPError:
-                update_document_status(db, document, "error", 100, "llm_http_error")
+            except Exception as exc:
+                message = str(exc)
+                if "llm_http_error:" in message:
+                    update_document_status(db, document, "error", 100, message)
+                else:
+                    update_document_status(db, document, "error", 100, "unexpected_error")
                 return
 
             try:
