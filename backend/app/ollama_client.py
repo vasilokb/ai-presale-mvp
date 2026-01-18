@@ -12,7 +12,7 @@ def build_prompt(user_prompt: str, schema_text: str) -> str:
         "The JSON must strictly match this schema:\n"
         f"{schema_text}\n"
         f"User prompt: {user_prompt}\n"
-        "Return ONLY JSON with no extra text."
+        "Return ONLY valid JSON. No markdown, no comments, no explanation."
     )
 
 
@@ -62,6 +62,8 @@ def call_ollama(prompt: str) -> str:
         "model": settings.ollama_model,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
+        "temperature": 0,
+        "top_p": 0.1,
     }
     generate_url = f"{settings.ollama_url}/api/generate"
     generate_payload = {"model": settings.ollama_model, "prompt": prompt, "stream": False}

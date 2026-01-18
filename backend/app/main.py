@@ -286,6 +286,7 @@ def get_result(
         "document_id": document.id,
         "version": result.version,
         "llm_model": result.llm_model,
+        "raw_llm_output": result.raw_llm_output,
         **result.result_json,
     }
 
@@ -327,6 +328,7 @@ def export_document_json(
                 "document_id": document.id,
                 "version": result.version,
                 "llm_model": result.llm_model,
+                "raw_llm_output": result.raw_llm_output,
                 **result.result_json,
             }
         ).body,

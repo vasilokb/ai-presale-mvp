@@ -60,18 +60,17 @@ def extract_txt_text(content: bytes) -> str:
             raise ValueError("txt_decode_failed") from exc
 
 
-def call_llm_with_retry(prompt: str) -> dict:
-    raw = call_ollama(prompt)
+def extract_json_object(text: str) -> dict:
     try:
-        return parse_llm_json(raw)
+        return parse_llm_json(text)
     except json.JSONDecodeError:
-        strict_prompt = (
-            f"{prompt}\n"
-            "Your previous response was invalid JSON. "
-            "Return ONLY valid JSON that matches the schema. No prose."
-        )
-        raw_retry = call_ollama(strict_prompt)
-        return parse_llm_json(raw_retry)
+        pass
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("llm_no_json_found")
+    snippet = text[start : end + 1]
+    return parse_llm_json(snippet)
 
 
 def update_document_status(db, document: Document, status: str, progress: int, message: str) -> None:
@@ -136,27 +135,72 @@ def process_document(document_id: str) -> None:
             combined_text = limit_prompt_text(combined_text, max_chars=12000)
             prompt = build_prompt(f"{document.prompt}\n\n{combined_text}", schema_text)
             try:
-                llm_json = call_llm_with_retry(prompt)
-            except json.JSONDecodeError:
-                update_document_status(db, document, "error", 100, "llm_invalid_json")
-                return
-            except Exception as exc:
-                message = str(exc)
-                if "llm_http_error:" in message:
-                    update_document_status(db, document, "error", 100, message)
-                else:
-                    update_document_status(db, document, "error", 100, "unexpected_error")
-                return
-
-            try:
                 schema = load_schema()
             except json.JSONDecodeError:
                 update_document_status(db, document, "error", 100, "schema_load_failed")
                 return
+
+            llm_json = None
+            raw_output = None
+            last_error = None
+            for attempt in range(3):
+                try:
+                    raw_output = call_ollama(prompt)
+                    llm_json = extract_json_object(raw_output)
+                except ValueError as exc:
+                    last_error = str(exc)
+                except json.JSONDecodeError:
+                    last_error = "llm_invalid_json"
+                except Exception as exc:
+                    message = str(exc)
+                    if "llm_http_error:" in message:
+                        update_document_status(db, document, "error", 100, message)
+                    else:
+                        update_document_status(db, document, "error", 100, "unexpected_error")
+                    return
+
+                if llm_json is not None:
+                    try:
+                        validate(instance=llm_json, schema=schema)
+                        break
+                    except ValidationError:
+                        last_error = "llm_schema_validation_failed"
+
+                repair_prompt = (
+                    "Fix the JSON to match the schema. Return ONLY valid JSON.\n"
+                    f"Schema:\n{schema_text}\n"
+                    f"Invalid output:\n{raw_output}\n"
+                )
+                prompt = repair_prompt
+
+            if llm_json is None:
+                update_document_status(db, document, "error", 100, last_error or "llm_invalid_json")
+                result = Result(
+                    id=str(uuid4()),
+                    document_id=document.id,
+                    version=1,
+                    llm_model=settings.ollama_model,
+                    result_json={"error": last_error or "llm_invalid_json"},
+                    raw_llm_output=raw_output,
+                )
+                db.add(result)
+                db.commit()
+                return
+
             try:
                 validate(instance=llm_json, schema=schema)
             except ValidationError:
                 update_document_status(db, document, "error", 100, "llm_schema_validation_failed")
+                result = Result(
+                    id=str(uuid4()),
+                    document_id=document.id,
+                    version=1,
+                    llm_model=settings.ollama_model,
+                    result_json={"error": "llm_schema_validation_failed"},
+                    raw_llm_output=raw_output,
+                )
+                db.add(result)
+                db.commit()
                 return
 
             round_to_hours = document.params_json.get("round_to_hours", 0.5)
@@ -181,6 +225,7 @@ def process_document(document_id: str) -> None:
                 version=1,
                 llm_model=settings.ollama_model,
                 result_json=llm_json,
+                raw_llm_output=raw_output,
             )
             db.add(result)
             db.commit()

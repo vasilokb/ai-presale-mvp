@@ -364,6 +364,10 @@ async function renderResultScreen(presaleId, documentId) {
           <button class="btn secondary" id="editBtn">Редактировать</button>
           <button class="btn" id="saveBtn">Сохранить</button>
         </div>
+        <details id="errorDetails" style="display:none;">
+          <summary>Show details</summary>
+          <pre id="rawOutput"></pre>
+        </details>
         <div class="status" id="saveStatus"></div>
       </div>
     `;
@@ -429,6 +433,16 @@ async function renderResultScreen(presaleId, documentId) {
     });
 
     renderTable();
+
+    const errorDetails = document.getElementById("errorDetails");
+    const rawOutput = document.getElementById("rawOutput");
+    if (currentResult.raw_llm_output) {
+      errorDetails.style.display = "block";
+      rawOutput.textContent = currentResult.raw_llm_output;
+    } else {
+      errorDetails.style.display = "none";
+      rawOutput.textContent = "";
+    }
   };
 
   const renderTable = () => {

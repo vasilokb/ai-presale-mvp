@@ -90,6 +90,10 @@ Start-Process http://localhost:3000
 2. Expect longer runs on CPU. The worker uses a 10-minute timeout and retries; if it still fails, the UI shows the exact reason (e.g. timeout or HTTP 500).
 3. Reduce input size: upload smaller PDFs or shorten the prompt to speed up local inference.
 
+## Troubleshooting schema validation
+
+If you see `llm_schema_validation_failed` or `llm_invalid_json`, the worker now retries with a repair prompt and stores the raw model output. In the UI result screen, use **Show details** to view the raw output that failed validation.
+
 ## Acceptance checklist
 
 1. `http://localhost:3000` → список пресейлов из API.
