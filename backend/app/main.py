@@ -58,6 +58,37 @@ def startup() -> None:
     Base.metadata.create_all(bind=engine)
 
 
+
+def error_response(status_code: int, error: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": error})
+
+
+class PresaleCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+
+
+class PresaleResponse(BaseModel):
+    id: str
+    name: str
+    created_at: datetime
+
+
+class DocumentStartRequest(BaseModel):
+    presale_id: str
+    prompt: str
+    params: dict
+
+
+class DocumentStartResponse(BaseModel):
+    document_id: str
+    status: str
+
+
+@app.on_event("startup")
+def startup() -> None:
+    Base.metadata.create_all(bind=engine)
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
