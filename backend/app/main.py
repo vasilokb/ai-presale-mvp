@@ -164,8 +164,8 @@ def get_status(document_id: str, db: Annotated[Session, Depends(get_db)]):
 @app.get("/api/v1/documents/{document_id}/result")
 def get_result(
     document_id: str,
-    version: int | None = Query(None, ge=1),
     db: Annotated[Session, Depends(get_db)],
+    version: int | None = Query(None, ge=1),
 ):
     document = db.get(Document, document_id)
     if not document:
