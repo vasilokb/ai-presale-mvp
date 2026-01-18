@@ -31,7 +31,8 @@
 
   api:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://presale:presale@postgres:5432/presale
       MINIO_ENDPOINT: http://minio:9000
@@ -39,7 +40,7 @@
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: uploads
       OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: llama3.1
+      OLLAMA_MODEL: NeuralNet/openchat-3.6:latest
     ports:
       - "8080:8080"
     depends_on:
@@ -49,7 +50,8 @@
 
   worker:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://presale:presale@postgres:5432/presale
       MINIO_ENDPOINT: http://minio:9000
@@ -57,12 +59,21 @@
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: uploads
       OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: llama3.1
+      OLLAMA_MODEL: NeuralNet/openchat-3.6:latest
     command: ["python","-m","app.worker"]
     depends_on:
       - postgres
       - minio
       - ollama
+
+  ui:
+    image: nginx:alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - ./ui:/usr/share/nginx/html:ro
+    depends_on:
+      - api
 
 volumes:
   pgdata:
