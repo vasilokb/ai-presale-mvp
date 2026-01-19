@@ -48,6 +48,7 @@ class Document(Base):
 
     presale = relationship("Presale", back_populates="documents")
     results = relationship("Result", back_populates="document", cascade="all, delete-orphan")
+    llm_debug_entries = relationship("LlmDebug", back_populates="document", cascade="all, delete-orphan")
 
 
 class Result(Base):
@@ -63,3 +64,18 @@ class Result(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     document = relationship("Document", back_populates="results")
+
+
+class LlmDebug(Base):
+    __tablename__ = "llm_debug"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    document_id: Mapped[str] = mapped_column(String(36), ForeignKey("documents.id"), nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    raw_output: Mapped[str] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    document = relationship("Document", back_populates="llm_debug_entries")

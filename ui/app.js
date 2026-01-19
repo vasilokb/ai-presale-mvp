@@ -284,6 +284,7 @@ async function renderResultScreen(presaleId, documentId) {
       if (status.status === "error") {
         clearInterval(interval);
         statusEl.textContent = `Ошибка: ${status.message}`;
+        await renderErrorDetails(documentId);
       }
     }, 2000);
   };
@@ -434,14 +435,32 @@ async function renderResultScreen(presaleId, documentId) {
 
     renderTable();
 
-    const errorDetails = document.getElementById("errorDetails");
-    const rawOutput = document.getElementById("rawOutput");
-    if (currentResult.raw_llm_output) {
-      errorDetails.style.display = "block";
-      rawOutput.textContent = currentResult.raw_llm_output;
+    if (currentResult.raw_llm_output || currentResult.validation_error) {
+      await renderErrorDetails(documentId);
     } else {
+      const errorDetails = document.getElementById("errorDetails");
+      const rawOutput = document.getElementById("rawOutput");
       errorDetails.style.display = "none";
       rawOutput.textContent = "";
+    }
+  };
+
+  const renderErrorDetails = async (docId) => {
+    const errorDetails = document.getElementById("errorDetails");
+    const rawOutput = document.getElementById("rawOutput");
+    try {
+      const debug = await fetchJson(`${API_BASE}/documents/${docId}/debug/llm`);
+      if (!debug.entries || debug.entries.length === 0) {
+        errorDetails.style.display = "none";
+        rawOutput.textContent = "";
+        return;
+      }
+      const latest = debug.entries[0];
+      errorDetails.style.display = "block";
+      rawOutput.textContent = `Attempt: ${latest.attempt}\nError: ${latest.error_detail || latest.error_code}\n\n${latest.raw_output || ""}`;
+    } catch (error) {
+      errorDetails.style.display = "block";
+      rawOutput.textContent = `Failed to load debug info: ${error.message}`;
     }
   };
 

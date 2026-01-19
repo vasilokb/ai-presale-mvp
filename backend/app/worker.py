@@ -12,7 +12,7 @@ from pypdf import PdfReader
 from sqlalchemy import select
 
 from app.db import Base, SessionLocal, engine
-from app.models import Document, File as FileRecord, Result
+from app.models import Document, File as FileRecord, LlmDebug, Result
 from app.ollama_client import JSON_SKELETON, build_prompt, call_ollama, parse_llm_json
 from app.settings import settings
 from app.storage import ensure_bucket, get_s3_client
@@ -83,6 +83,42 @@ def limit_prompt_text(text: str, max_chars: int = 12000) -> str:
     return text[:max_chars]
 
 
+def log_llm_output(document_id: str, attempt: int, raw_output: str | None) -> None:
+    if raw_output is None:
+        logging.info("LLM output missing for document %s attempt %s", document_id, attempt)
+        return
+    snippet = raw_output[:2000]
+    logging.info(
+        "LLM output for document %s attempt %s: length=%s snippet=%s",
+        document_id,
+        attempt,
+        len(raw_output),
+        snippet,
+    )
+
+
+def save_llm_debug(
+    db,
+    document_id: str,
+    attempt: int,
+    prompt: str,
+    raw_output: str | None,
+    error_code: str | None,
+    error_detail: str | None,
+) -> None:
+    entry = LlmDebug(
+        id=str(uuid4()),
+        document_id=document_id,
+        attempt=attempt,
+        prompt=prompt,
+        raw_output=raw_output,
+        error_code=error_code,
+        error_detail=error_detail,
+    )
+    db.add(entry)
+    db.commit()
+
+
 def process_document(document_id: str) -> None:
     db = SessionLocal()
     try:
@@ -141,15 +177,53 @@ def process_document(document_id: str) -> None:
             last_error = None
             validation_error = None
             for attempt in range(3):
+                attempt_number = attempt + 1
                 try:
                     raw_output = call_ollama(prompt)
+                    log_llm_output(document.id, attempt_number, raw_output)
                     llm_json = extract_json_object(raw_output)
+                    save_llm_debug(
+                        db,
+                        document.id,
+                        attempt_number,
+                        prompt,
+                        raw_output,
+                        None,
+                        None,
+                    )
                 except ValueError as exc:
                     last_error = str(exc)
+                    save_llm_debug(
+                        db,
+                        document.id,
+                        attempt_number,
+                        prompt,
+                        raw_output,
+                        last_error,
+                        str(exc),
+                    )
                 except json.JSONDecodeError:
                     last_error = "llm_invalid_json"
+                    save_llm_debug(
+                        db,
+                        document.id,
+                        attempt_number,
+                        prompt,
+                        raw_output,
+                        last_error,
+                        "json_decode_error",
+                    )
                 except Exception as exc:
                     message = str(exc)
+                    save_llm_debug(
+                        db,
+                        document.id,
+                        attempt_number,
+                        prompt,
+                        raw_output,
+                        "llm_http_error" if "llm_http_error:" in message else "unexpected_error",
+                        message,
+                    )
                     if "llm_http_error:" in message:
                         update_document_status(db, document, "error", 100, message)
                     else:
@@ -163,6 +237,15 @@ def process_document(document_id: str) -> None:
                     except ValidationError:
                         last_error = "llm_schema_validation_failed"
                         validation_error = "llm_schema_validation_failed"
+                        save_llm_debug(
+                            db,
+                            document.id,
+                            attempt_number,
+                            prompt,
+                            raw_output,
+                            last_error,
+                            "schema_validation_failed",
+                        )
 
                 repair_prompt = (
                     "Return ONLY corrected JSON that matches the schema EXACTLY. No other text.\n"

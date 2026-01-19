@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from starlette.responses import Response
 
 from app.db import Base, engine, get_db
-from app.models import Document, File as FileRecord, Presale, Result
+from app.models import Document, File as FileRecord, LlmDebug, Presale, Result
 from app.storage import ensure_bucket, get_s3_client
 from app.ollama_client import check_ollama_health
 from app.settings import settings
@@ -337,6 +337,33 @@ def export_document_json(
         media_type="application/json",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@app.get("/api/v1/documents/{document_id}/debug/llm")
+def get_llm_debug(document_id: str, db: Annotated[Session, Depends(get_db)]):
+    document = db.get(Document, document_id)
+    if not document:
+        return error_response(404, "document_not_found")
+    entries = db.scalars(
+        select(LlmDebug)
+        .where(LlmDebug.document_id == document_id)
+        .order_by(desc(LlmDebug.created_at))
+        .limit(5)
+    ).all()
+    return {
+        "document_id": document_id,
+        "entries": [
+            {
+                "attempt": entry.attempt,
+                "prompt": entry.prompt,
+                "raw_output": entry.raw_output,
+                "error_code": entry.error_code,
+                "error_detail": entry.error_detail,
+                "created_at": entry.created_at,
+            }
+            for entry in entries
+        ],
+    }
 
 
 @app.get("/api/v1/documents")
