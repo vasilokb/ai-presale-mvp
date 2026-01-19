@@ -61,6 +61,7 @@ class Result(Base):
     result_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     raw_llm_output: Mapped[str | None] = mapped_column(Text, nullable=True)
     validation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    llm_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     document = relationship("Document", back_populates="results")

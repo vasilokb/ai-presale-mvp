@@ -10,7 +10,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 from starlette.responses import Response
 
-from app.db import Base, engine, get_db
+from app.db import Base, engine, ensure_result_columns, get_db
 from app.models import Document, File as FileRecord, LlmDebug, Presale, Result
 from app.storage import ensure_bucket, get_s3_client
 from app.ollama_client import check_ollama_health
@@ -67,6 +67,7 @@ class ResultVersionRequest(BaseModel):
 @app.on_event("startup")
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
+    ensure_result_columns()
 
 
 @app.get("/health")

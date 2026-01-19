@@ -10,8 +10,9 @@ from docx import Document as DocxDocument
 from jsonschema import ValidationError, validate
 from pypdf import PdfReader
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
-from app.db import Base, SessionLocal, engine
+from app.db import Base, SessionLocal, engine, ensure_result_columns
 from app.models import Document, File as FileRecord, LlmDebug, Result
 from app.ollama_client import JSON_SKELETON, build_prompt, call_ollama, parse_llm_json
 from app.settings import settings
@@ -69,12 +70,34 @@ def extract_json_object(text: str) -> dict:
         raise ValueError("llm_invalid_json")
 
 
+def safe_update_document_status(document_id: str, status: str, progress: int, message: str) -> None:
+    db = SessionLocal()
+    try:
+        document = db.get(Document, document_id)
+        if not document:
+            return
+        document.status = status
+        document.progress = progress
+        document.message = message
+        db.add(document)
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logging.error("Failed to persist status for document %s", document_id)
+    finally:
+        db.close()
+
+
 def update_document_status(db, document: Document, status: str, progress: int, message: str) -> None:
     document.status = status
     document.progress = progress
     document.message = message
     db.add(document)
-    db.commit()
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        safe_update_document_status(document.id, status, progress, message)
 
 
 def limit_prompt_text(text: str, max_chars: int = 12000) -> str:
@@ -116,7 +139,11 @@ def save_llm_debug(
         error_detail=error_detail,
     )
     db.add(entry)
-    db.commit()
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logging.error("Failed to persist LLM debug info for document %s attempt %s", document_id, attempt)
 
 
 def process_document(document_id: str) -> None:
@@ -266,9 +293,14 @@ def process_document(document_id: str) -> None:
                     result_json={"error": last_error or "llm_invalid_json"},
                     raw_llm_output=raw_output,
                     validation_error=validation_error or last_error,
+                    llm_prompt=prompt,
                 )
                 db.add(result)
-                db.commit()
+                try:
+                    db.commit()
+                except SQLAlchemyError:
+                    db.rollback()
+                    safe_update_document_status(document.id, "error", 100, "db_error")
                 return
 
             try:
@@ -283,9 +315,14 @@ def process_document(document_id: str) -> None:
                     result_json={"error": "llm_schema_validation_failed"},
                     raw_llm_output=raw_output,
                     validation_error="llm_schema_validation_failed",
+                    llm_prompt=prompt,
                 )
                 db.add(result)
-                db.commit()
+                try:
+                    db.commit()
+                except SQLAlchemyError:
+                    db.rollback()
+                    safe_update_document_status(document.id, "error", 100, "db_error")
                 return
 
             round_to_hours = document.params_json.get("round_to_hours", 0.5)
@@ -312,9 +349,15 @@ def process_document(document_id: str) -> None:
                 result_json=llm_json,
                 raw_llm_output=raw_output,
                 validation_error=validation_error,
+                llm_prompt=prompt,
             )
             db.add(result)
-            db.commit()
+            try:
+                db.commit()
+            except SQLAlchemyError:
+                db.rollback()
+                safe_update_document_status(document.id, "error", 100, "db_error")
+                return
 
             update_document_status(db, document, "done", 100, "ok")
         except Exception:
@@ -346,6 +389,7 @@ def pick_next_document_id(db) -> str | None:
 
 def main() -> None:
     Base.metadata.create_all(bind=engine)
+    ensure_result_columns()
     schema_exists = SCHEMA_PATH.exists()
     if not schema_exists:
         raise FileNotFoundError(f"Schema file not found: {SCHEMA_PATH}")
