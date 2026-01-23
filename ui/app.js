@@ -505,7 +505,8 @@ async function renderResultScreen(presaleId, documentId) {
         <thead>
           <tr>
             <th>Epic</th>
-            <th>Task</th>
+            <th>Story title</th>
+            <th>Type</th>
             <th>Role</th>
             <th>Optimistic</th>
             <th>Most Likely</th>
@@ -522,6 +523,7 @@ async function renderResultScreen(presaleId, documentId) {
                   <tr>
                     <td>${row.epic || ""}</td>
                     <td>${row.title || ""}</td>
+                    <td>${row.type || ""}</td>
                     <td>${row.role || ""}</td>
                     <td><input type="number" data-index="${index}" data-field="optimistic" value="${pert.optimistic ?? 0}" /></td>
                     <td><input type="number" data-index="${index}" data-field="most_likely" value="${pert.most_likely ?? 0}" /></td>
@@ -534,6 +536,7 @@ async function renderResultScreen(presaleId, documentId) {
                 <tr>
                   <td>${row.epic || ""}</td>
                   <td>${row.title || ""}</td>
+                  <td>${row.type || ""}</td>
                   <td>${row.role || ""}</td>
                   <td>${pert.optimistic ?? 0}</td>
                   <td>${pert.most_likely ?? 0}</td>

@@ -18,7 +18,7 @@ from app.ollama_client import JSON_SKELETON, build_prompt, call_ollama, parse_ll
 from app.settings import settings
 from app.storage import ensure_bucket, get_s3_client
 
-SCHEMA_PATH = Path(__file__).resolve().parents[1] / "spec" / "json-schema" / "llm_output.schema.json"
+SCHEMA_PATH = Path(__file__).resolve().parents[1] / "spec" / "json-schema" / "story_rows_output.schema.json"
 
 
 def load_schema_text() -> str:
@@ -62,6 +62,13 @@ def extract_txt_text(content: bytes) -> str:
 
 
 HEADER_TITLES = {
+    "Input Data",
+    "Output Data",
+    "Functional Requirements",
+    "Non-Functional Requirements",
+    "Acceptance Criteria",
+    "User Scenario",
+    "Data Sources",
     "Входные данные",
     "Выходные данные",
     "Функциональные требования",
@@ -130,14 +137,13 @@ def normalize_role(role: str) -> str:
 
 
 def apply_role_normalization(llm_json: dict) -> None:
-    for epic in llm_json.get("epics", []):
-        for task in epic.get("tasks", []):
-            role = task.get("role")
-            if isinstance(role, str):
-                task["role"] = normalize_role(role)
+    for row in llm_json.get("rows", []):
+        role = row.get("role")
+        if isinstance(role, str):
+            row["role"] = normalize_role(role)
 
 
-def is_task_title_low_quality(title: str) -> bool:
+def is_story_title_low_quality(title: str) -> bool:
     normalized = title.strip()
     if not normalized:
         return True
@@ -151,12 +157,59 @@ def is_task_title_low_quality(title: str) -> bool:
 
 
 def has_low_quality_titles(llm_json: dict) -> bool:
-    for epic in llm_json.get("epics", []):
-        for task in epic.get("tasks", []):
-            title = task.get("title", "")
-            if isinstance(title, str) and is_task_title_low_quality(title):
-                return True
+    for row in llm_json.get("rows", []):
+        title = row.get("story_title", "")
+        if isinstance(title, str) and is_story_title_low_quality(title):
+            return True
     return False
+
+
+def has_required_row_counts(llm_json: dict) -> bool:
+    types = [row.get("story_type") for row in llm_json.get("rows", [])]
+    return types.count("functional") >= 3 and types.count("non_functional") >= 2
+
+
+def has_required_row_fields(llm_json: dict) -> bool:
+    for row in llm_json.get("rows", []):
+        if len(row.get("acceptance", [])) < 2:
+            return False
+        if len(row.get("see", [])) < 1:
+            return False
+        if len(row.get("do", [])) < 1:
+            return False
+        if len(row.get("get", [])) < 1:
+            return False
+    return True
+
+
+def has_uniform_pert_rows(llm_json: dict) -> bool:
+    perts = {
+        (row.get("pert_hours", {}).get("optimistic"),
+         row.get("pert_hours", {}).get("most_likely"),
+         row.get("pert_hours", {}).get("pessimistic"))
+        for row in llm_json.get("rows", [])
+    }
+    return len(perts) == 1
+
+
+def rows_text(llm_json: dict) -> str:
+    return " ".join(
+        " ".join(row.get(field, "") if isinstance(row.get(field), str) else " ".join(row.get(field, [])))
+        for row in llm_json.get("rows", [])
+        for field in ("epic", "story_title", "see", "do", "get", "acceptance")
+    ).lower()
+
+
+def has_role_coverage(llm_json: dict) -> bool:
+    text = rows_text(llm_json)
+    roles = {row.get("role") for row in llm_json.get("rows", [])}
+    if any(keyword in text for keyword in ("api", "provider", "tariff", "file", "upload", "storage")):
+        if "Data-engineer" not in roles:
+            return False
+    if any(keyword in text for keyword in ("deploy", "monitor", "logging", "observability")):
+        if "DevOps" not in roles:
+            return False
+    return True
 
 
 def log_llm_output(document_id: str, attempt: int, raw_output: str | None) -> None:
@@ -313,7 +366,19 @@ def process_document(document_id: str) -> None:
                 if llm_json is not None:
                     apply_role_normalization(llm_json)
                     llm_json["llm_model"] = settings.ollama_model
-                    if has_low_quality_titles(llm_json):
+                    llm_json["document_id"] = document.id
+                    if llm_json.get("document_id") == "string":
+                        last_error = "llm_quality_gate_failed"
+                        save_llm_debug(
+                            db,
+                            document.id,
+                            attempt_number,
+                            prompt,
+                            raw_output,
+                            last_error,
+                            "document_id_placeholder",
+                        )
+                    elif has_low_quality_titles(llm_json):
                         last_error = "llm_quality_gate_failed"
                         save_llm_debug(
                             db,
@@ -323,6 +388,50 @@ def process_document(document_id: str) -> None:
                             raw_output,
                             last_error,
                             "low_quality_titles",
+                        )
+                    elif not has_required_row_counts(llm_json):
+                        last_error = "llm_quality_gate_failed"
+                        save_llm_debug(
+                            db,
+                            document.id,
+                            attempt_number,
+                            prompt,
+                            raw_output,
+                            last_error,
+                            "row_type_counts",
+                        )
+                    elif not has_required_row_fields(llm_json):
+                        last_error = "llm_quality_gate_failed"
+                        save_llm_debug(
+                            db,
+                            document.id,
+                            attempt_number,
+                            prompt,
+                            raw_output,
+                            last_error,
+                            "missing_row_fields",
+                        )
+                    elif has_uniform_pert_rows(llm_json):
+                        last_error = "llm_quality_gate_failed"
+                        save_llm_debug(
+                            db,
+                            document.id,
+                            attempt_number,
+                            prompt,
+                            raw_output,
+                            last_error,
+                            "uniform_pert_values",
+                        )
+                    elif not has_role_coverage(llm_json):
+                        last_error = "llm_quality_gate_failed"
+                        save_llm_debug(
+                            db,
+                            document.id,
+                            attempt_number,
+                            prompt,
+                            raw_output,
+                            last_error,
+                            "missing_role_coverage",
                         )
                     else:
                         try:
@@ -343,7 +452,8 @@ def process_document(document_id: str) -> None:
 
                 repair_prompt = (
                     "Return ONLY corrected JSON that matches the schema EXACTLY. No other text.\n"
-                    "Replace section headers with concrete implementation tasks. Each task must be an actionable work item.\n"
+                    "Replace section headers with concrete, actionable user stories.\n"
+                    "Each row must include see/do/get and acceptance criteria, and be derived from the document.\n"
                     f"Schema:\n{schema_text}\n"
                     "You MUST strictly follow this structure exactly as shown:\n"
                     f"{JSON_SKELETON}\n"
@@ -395,20 +505,20 @@ def process_document(document_id: str) -> None:
 
             round_to_hours = document.params_json.get("round_to_hours", 0.5)
             total_expected = 0.0
-            for epic in llm_json.get("epics", []):
-                for task in epic.get("tasks", []):
-                    pert = task.get("pert_hours", {})
-                    optimistic = float(pert.get("optimistic", 0))
-                    most_likely = float(pert.get("most_likely", 0))
-                    pessimistic = float(pert.get("pessimistic", 0))
-                    expected = (optimistic + 4 * most_likely + pessimistic) / 6
-                    expected = round_to_step(expected, round_to_hours)
-                    pert["expected"] = round(expected, 2)
-                    total_expected += pert["expected"]
+            for row in llm_json.get("rows", []):
+                pert = row.get("pert_hours", {})
+                optimistic = float(pert.get("optimistic", 0))
+                most_likely = float(pert.get("most_likely", 0))
+                pessimistic = float(pert.get("pessimistic", 0))
+                expected = (optimistic + 4 * most_likely + pessimistic) / 6
+                expected = round_to_step(expected, round_to_hours)
+                pert["expected"] = round(expected, 2)
+                total_expected += pert["expected"]
 
             total_expected = round_to_step(total_expected, round_to_hours)
             llm_json["totals"] = {"expected_hours": round(total_expected, 2)}
             llm_json["llm_model"] = settings.ollama_model
+            llm_json["document_id"] = document.id
 
             update_document_status(db, document, "running", 90, "saving_result")
             result = Result(

@@ -37,51 +37,29 @@ def round_to_step(value: float, step: float) -> float:
     return round(value / step) * step
 
 
-def build_result_rows(result_json: dict) -> list[dict]:
-    rows = []
-    for epic in result_json.get("epics", []):
-        epic_title = epic.get("title", "")
-        for task in epic.get("tasks", []):
-            pert = task.get("pert_hours", {})
-            rows.append(
-                {
-                    "epic": epic_title,
-                    "task": task.get("title", ""),
-                    "role": task.get("role", ""),
-                    "optimistic": pert.get("optimistic", 0),
-                    "most_likely": pert.get("most_likely", 0),
-                    "pessimistic": pert.get("pessimistic", 0),
-                    "expected": pert.get("expected", 0),
-                }
-            )
-    return rows
-
-
 def build_story_rows_from_result(result_json: dict, document_id: str, version: int) -> list[StoryRow]:
     rows = []
-    for epic in result_json.get("epics", []):
-        epic_title = epic.get("title", "")
-        for task in epic.get("tasks", []):
-            pert = task.get("pert_hours", {})
-            rows.append(
-                StoryRow(
-                    id=str(uuid4()),
-                    document_id=document_id,
-                    version=version,
-                    epic=epic_title,
-                    title=task.get("title", ""),
-                    type="functional",
-                    role=task.get("role", ""),
-                    see=[],
-                    do=[],
-                    get=[],
-                    acceptance=[],
-                    optimistic=float(pert.get("optimistic", 0)),
-                    most_likely=float(pert.get("most_likely", 0)),
-                    pessimistic=float(pert.get("pessimistic", 0)),
-                    expected=float(pert.get("expected", 0)),
-                )
+    for row in result_json.get("rows", []):
+        pert = row.get("pert_hours", {})
+        rows.append(
+            StoryRow(
+                id=row.get("row_id") or str(uuid4()),
+                document_id=document_id,
+                version=version,
+                epic=row.get("epic", ""),
+                title=row.get("story_title", ""),
+                type=row.get("story_type", "functional"),
+                role=row.get("role", ""),
+                see=row.get("see", []),
+                do=row.get("do", []),
+                get=row.get("get", []),
+                acceptance=row.get("acceptance", []),
+                optimistic=float(pert.get("optimistic", 0)),
+                most_likely=float(pert.get("most_likely", 0)),
+                pessimistic=float(pert.get("pessimistic", 0)),
+                expected=float(pert.get("expected", 0)),
             )
+        )
     return rows
 
 
@@ -97,13 +75,24 @@ def ensure_story_rows(db: Session, document_id: str, version: int, result_json: 
     return rows
 
 
-def build_result_json_from_rows(rows: list[StoryRow], llm_model: str) -> dict:
-    epics_map: dict[str, list[dict]] = {}
-    for row in rows:
-        epics_map.setdefault(row.epic, []).append(
+def build_result_json_from_rows(rows: list[StoryRow], llm_model: str, document_id: str, version: int) -> dict:
+    total_expected = sum(row.expected for row in rows)
+    total_expected = round_to_step(total_expected, 0.5)
+    return {
+        "document_id": document_id,
+        "version": version,
+        "llm_model": llm_model,
+        "rows": [
             {
-                "title": row.title,
+                "row_id": row.id,
+                "epic": row.epic,
+                "story_title": row.title,
+                "story_type": row.type,
                 "role": row.role,
+                "see": row.see,
+                "do": row.do,
+                "get": row.get,
+                "acceptance": row.acceptance,
                 "pert_hours": {
                     "optimistic": row.optimistic,
                     "most_likely": row.most_likely,
@@ -111,13 +100,8 @@ def build_result_json_from_rows(rows: list[StoryRow], llm_model: str) -> dict:
                     "expected": row.expected,
                 },
             }
-        )
-    epics = [{"title": epic, "tasks": tasks} for epic, tasks in epics_map.items()]
-    total_expected = sum(row.expected for row in rows)
-    total_expected = round_to_step(total_expected, 0.5)
-    return {
-        "llm_model": llm_model,
-        "epics": epics,
+            for row in rows
+        ],
         "totals": {"expected_hours": round(total_expected, 2)},
     }
 
@@ -666,7 +650,7 @@ def reestimate_rows(
             )
         )
     db.add_all(new_rows)
-    result_json = build_result_json_from_rows(new_rows, latest_result.llm_model)
+    result_json = build_result_json_from_rows(new_rows, latest_result.llm_model, document_id, new_version)
     result = Result(
         id=str(uuid4()),
         document_id=document_id,

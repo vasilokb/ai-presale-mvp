@@ -10,21 +10,23 @@ JSON_SKELETON = """{
   "document_id": "string",
   "version": 1,
   "llm_model": "string",
-  "epics": [
+  "rows": [
     {
-      "title": "string",
-      "tasks": [
-        {
-          "title": "string",
-          "role": "Backend",
-          "pert_hours": {
-            "optimistic": 1,
-            "most_likely": 2,
-            "pessimistic": 3,
-            "expected": 2.0
-          }
-        }
-      ]
+      "row_id": "string",
+      "epic": "string",
+      "story_title": "string",
+      "story_type": "functional",
+      "role": "Backend",
+      "see": ["string"],
+      "do": ["string"],
+      "get": ["string"],
+      "acceptance": ["string", "string"],
+      "pert_hours": {
+        "optimistic": 1,
+        "most_likely": 2,
+        "pessimistic": 3,
+        "expected": 2.0
+      }
     }
   ],
   "totals": {
@@ -42,6 +44,9 @@ def build_prompt(user_prompt: str, schema_text: str) -> str:
         "All numeric values must be numbers (no strings).\n"
         "Do NOT use placeholder titles like \"Epic Title\" or \"Task Title\" — titles must be derived from the document text.\n"
         "Roles allowed: \"SA/BA\", \"Backend\", \"Frontend\", \"Data-engineer\", \"DevOps\".\n"
+        "Every row must be actionable and NOT a section header.\n"
+        "You MUST include at least 3 functional rows and 2 non_functional rows.\n"
+        "Each row must have acceptance with at least 2 items, and see/do/get with at least 1 item each.\n"
         "You MUST strictly follow this structure exactly as shown:\n"
         f"{JSON_SKELETON}\n"
         "The JSON must strictly match this schema:\n"
