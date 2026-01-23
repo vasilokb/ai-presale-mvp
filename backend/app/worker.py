@@ -406,6 +406,7 @@ def process_document(document_id: str) -> None:
                     pert["expected"] = round(expected, 2)
                     total_expected += pert["expected"]
 
+            total_expected = round_to_step(total_expected, round_to_hours)
             llm_json["totals"] = {"expected_hours": round(total_expected, 2)}
             llm_json["llm_model"] = settings.ollama_model
 

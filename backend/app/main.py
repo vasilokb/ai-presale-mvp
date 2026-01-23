@@ -30,6 +30,32 @@ def error_response(status_code: int, error: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": error})
 
 
+def round_to_step(value: float, step: float) -> float:
+    if step <= 0:
+        return value
+    return round(value / step) * step
+
+
+def build_result_rows(result_json: dict) -> list[dict]:
+    rows = []
+    for epic in result_json.get("epics", []):
+        epic_title = epic.get("title", "")
+        for task in epic.get("tasks", []):
+            pert = task.get("pert_hours", {})
+            rows.append(
+                {
+                    "epic": epic_title,
+                    "task": task.get("title", ""),
+                    "role": task.get("role", ""),
+                    "optimistic": pert.get("optimistic", 0),
+                    "most_likely": pert.get("most_likely", 0),
+                    "pessimistic": pert.get("pessimistic", 0),
+                    "expected": pert.get("expected", 0),
+                }
+            )
+    return rows
+
+
 class PresaleCreate(BaseModel):
     name: str = Field(..., min_length=1)
 
@@ -290,6 +316,37 @@ def get_result(
         "raw_llm_output": result.raw_llm_output,
         "validation_error": result.validation_error,
         **result.result_json,
+    }
+
+
+@app.get("/api/v1/documents/{document_id}/result-view")
+def get_result_view(
+    document_id: str,
+    db: Annotated[Session, Depends(get_db)],
+    version: int | None = Query(None, ge=1),
+):
+    document = db.get(Document, document_id)
+    if not document:
+        return error_response(404, "document_not_found")
+    if document.status != "done":
+        return error_response(409, "result_not_ready")
+    query = select(Result).where(Result.document_id == document_id)
+    if version is not None:
+        query = query.where(Result.version == version)
+    else:
+        query = query.order_by(desc(Result.version))
+    result = db.scalar(query)
+    if not result:
+        return error_response(404, "document_not_found")
+    rows = build_result_rows(result.result_json)
+    total_expected = sum(float(row.get("expected", 0)) for row in rows)
+    total_expected = round_to_step(total_expected, 0.5)
+    return {
+        "document_id": document.id,
+        "version": result.version,
+        "llm_model": result.llm_model,
+        "rows": rows,
+        "totals": {"expected_hours": round(total_expected, 2)},
     }
 
 

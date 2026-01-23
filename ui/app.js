@@ -256,11 +256,15 @@ async function renderResultScreen(presaleId, documentId) {
   let displayMode = "summary";
   let currentRole = "All";
   let documentMeta = null;
+  let resultRows = [];
 
   const loadResult = async () => {
     try {
       const result = await fetchJson(`${API_BASE}/documents/${documentId}/result`);
+      const view = await fetchJson(`${API_BASE}/documents/${documentId}/result-view`);
       currentResult = result;
+      resultRows = view.rows || [];
+      currentResult.totals = view.totals;
       renderResult();
     } catch (error) {
       if (String(error.message).includes("result_not_ready")) {
@@ -298,9 +302,9 @@ async function renderResultScreen(presaleId, documentId) {
     return { epicCount: epics.length, taskCount };
   };
 
-  const applyRoleFilter = (tasks) => {
-    if (currentRole === "All") return tasks;
-    return tasks.filter((task) => task.role === currentRole);
+  const applyRoleFilter = (rows) => {
+    if (currentRole === "All") return rows;
+    return rows.filter((row) => row.role === currentRole);
   };
 
   const recalcExpected = (task) => {
@@ -313,18 +317,15 @@ async function renderResultScreen(presaleId, documentId) {
     pert.expected = Number(rounded.toFixed(2));
   };
 
-  const buildSummaryRows = (result) => {
+  const buildSummaryRows = () => {
     const totals = {};
-    (result.epics || []).forEach((epic) => {
-      (epic.tasks || []).forEach((task) => {
-        const role = task.role || "Unknown";
-        if (!totals[role]) totals[role] = { optimistic: 0, most_likely: 0, pessimistic: 0, expected: 0 };
-        const pert = task.pert_hours || {};
-        totals[role].optimistic += Number(pert.optimistic || 0);
-        totals[role].most_likely += Number(pert.most_likely || 0);
-        totals[role].pessimistic += Number(pert.pessimistic || 0);
-        totals[role].expected += Number(pert.expected || 0);
-      });
+    resultRows.forEach((row) => {
+      const role = row.role || "Unknown";
+      if (!totals[role]) totals[role] = { optimistic: 0, most_likely: 0, pessimistic: 0, expected: 0 };
+      totals[role].optimistic += Number(row.optimistic || 0);
+      totals[role].most_likely += Number(row.most_likely || 0);
+      totals[role].pessimistic += Number(row.pessimistic || 0);
+      totals[role].expected += Number(row.expected || 0);
     });
     return Object.entries(totals).map(([role, values]) => ({ role, ...values }));
   };
@@ -468,9 +469,7 @@ async function renderResultScreen(presaleId, documentId) {
     const tableArea = document.getElementById("tableArea");
     if (!tableArea || !currentResult) return;
     if (displayMode === "summary") {
-      const rows = buildSummaryRows(currentResult).filter(
-        (row) => currentRole === "All" || row.role === currentRole
-      );
+      const rows = buildSummaryRows().filter((row) => currentRole === "All" || row.role === currentRole);
       tableArea.innerHTML = `
         <table>
           <thead>
@@ -501,17 +500,7 @@ async function renderResultScreen(presaleId, documentId) {
       `;
       return;
     }
-    const rows = [];
-    let globalIndex = 0;
-    (currentResult.epics || []).forEach((epic) => {
-      (epic.tasks || []).forEach((task) => {
-        rows.push({ epic: epic.name, task, index: globalIndex });
-        globalIndex += 1;
-      });
-    });
-    const filteredRows = currentRole === "All"
-      ? rows
-      : rows.filter((row) => row.task.role === currentRole);
+    const filteredRows = applyRoleFilter(resultRows);
     tableArea.innerHTML = `
       <table>
         <thead>
@@ -527,34 +516,29 @@ async function renderResultScreen(presaleId, documentId) {
         </thead>
         <tbody>
           ${filteredRows
-            .map((row) => {
-              const pert = row.task.pert_hours || {};
-              const optimistic = pert.optimistic ?? 0;
-              const mostLikely = pert.most_likely ?? 0;
-              const pessimistic = pert.pessimistic ?? 0;
-              const expected = pert.expected ?? 0;
+            .map((row, index) => {
               if (editMode) {
                 return `
                   <tr>
                     <td>${row.epic || ""}</td>
-                    <td>${row.task.name || ""}</td>
-                    <td>${row.task.role || ""}</td>
-                    <td><input type="number" data-index="${row.index}" data-field="optimistic" value="${optimistic}" /></td>
-                    <td><input type="number" data-index="${row.index}" data-field="most_likely" value="${mostLikely}" /></td>
-                    <td><input type="number" data-index="${row.index}" data-field="pessimistic" value="${pessimistic}" /></td>
-                    <td>${expected}</td>
+                    <td>${row.task || ""}</td>
+                    <td>${row.role || ""}</td>
+                    <td><input type="number" data-index="${index}" data-field="optimistic" value="${row.optimistic ?? 0}" /></td>
+                    <td><input type="number" data-index="${index}" data-field="most_likely" value="${row.most_likely ?? 0}" /></td>
+                    <td><input type="number" data-index="${index}" data-field="pessimistic" value="${row.pessimistic ?? 0}" /></td>
+                    <td>${row.expected ?? 0}</td>
                   </tr>
                 `;
               }
               return `
                 <tr>
                   <td>${row.epic || ""}</td>
-                  <td>${row.task.name || ""}</td>
-                  <td>${row.task.role || ""}</td>
-                  <td>${optimistic}</td>
-                  <td>${mostLikely}</td>
-                  <td>${pessimistic}</td>
-                  <td>${expected}</td>
+                  <td>${row.task || ""}</td>
+                  <td>${row.role || ""}</td>
+                  <td>${row.optimistic ?? 0}</td>
+                  <td>${row.most_likely ?? 0}</td>
+                  <td>${row.pessimistic ?? 0}</td>
+                  <td>${row.expected ?? 0}</td>
                 </tr>
               `;
             })
@@ -568,16 +552,13 @@ async function renderResultScreen(presaleId, documentId) {
         input.addEventListener("input", (event) => {
           const index = Number(event.target.dataset.index);
           const field = event.target.dataset.field;
-          const rowsAll = [];
-          (currentResult.epics || []).forEach((epic) => {
-            (epic.tasks || []).forEach((task) => {
-              rowsAll.push(task);
-            });
-          });
-          const task = rowsAll[index];
-          task.pert_hours = task.pert_hours || {};
-          task.pert_hours[field] = Number(event.target.value);
-          recalcExpected(task);
+          const row = filteredRows[index];
+          row[field] = Number(event.target.value);
+          const optimistic = Number(row.optimistic || 0);
+          const mostLikely = Number(row.most_likely || 0);
+          const pessimistic = Number(row.pessimistic || 0);
+          const expected = (optimistic + 4 * mostLikely + pessimistic) / 6;
+          row.expected = Number((Math.round(expected / 0.5) * 0.5).toFixed(2));
           recalcTotals();
         });
       });
@@ -586,11 +567,8 @@ async function renderResultScreen(presaleId, documentId) {
 
   const recalcTotals = () => {
     let total = 0;
-    (currentResult.epics || []).forEach((epic) => {
-      (epic.tasks || []).forEach((task) => {
-        recalcExpected(task);
-        total += Number(task.pert_hours?.expected || 0);
-      });
+    resultRows.forEach((row) => {
+      total += Number(row.expected || 0);
     });
     currentResult.totals = { expected_hours: Number(total.toFixed(2)) };
   };
