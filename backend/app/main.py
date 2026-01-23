@@ -1,5 +1,5 @@
 ﻿from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Query, UploadFile
@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session
 from starlette.responses import Response
 
 from app.db import Base, engine, ensure_result_columns, get_db
-from app.models import Document, File as FileRecord, LlmDebug, Presale, Result
+from app.models import Document, File as FileRecord, LlmDebug, Presale, Result, StoryRow
 from app.storage import ensure_bucket, get_s3_client
+from app.ollama_client import call_ollama, parse_llm_json
 from app.ollama_client import check_ollama_health
 from app.settings import settings
 
@@ -56,6 +57,71 @@ def build_result_rows(result_json: dict) -> list[dict]:
     return rows
 
 
+def build_story_rows_from_result(result_json: dict, document_id: str, version: int) -> list[StoryRow]:
+    rows = []
+    for epic in result_json.get("epics", []):
+        epic_title = epic.get("title", "")
+        for task in epic.get("tasks", []):
+            pert = task.get("pert_hours", {})
+            rows.append(
+                StoryRow(
+                    id=str(uuid4()),
+                    document_id=document_id,
+                    version=version,
+                    epic=epic_title,
+                    title=task.get("title", ""),
+                    type="functional",
+                    role=task.get("role", ""),
+                    see=[],
+                    do=[],
+                    get=[],
+                    acceptance=[],
+                    optimistic=float(pert.get("optimistic", 0)),
+                    most_likely=float(pert.get("most_likely", 0)),
+                    pessimistic=float(pert.get("pessimistic", 0)),
+                    expected=float(pert.get("expected", 0)),
+                )
+            )
+    return rows
+
+
+def ensure_story_rows(db: Session, document_id: str, version: int, result_json: dict) -> list[StoryRow]:
+    rows = db.scalars(
+        select(StoryRow).where(StoryRow.document_id == document_id, StoryRow.version == version)
+    ).all()
+    if rows:
+        return rows
+    rows = build_story_rows_from_result(result_json, document_id, version)
+    db.add_all(rows)
+    db.commit()
+    return rows
+
+
+def build_result_json_from_rows(rows: list[StoryRow], llm_model: str) -> dict:
+    epics_map: dict[str, list[dict]] = {}
+    for row in rows:
+        epics_map.setdefault(row.epic, []).append(
+            {
+                "title": row.title,
+                "role": row.role,
+                "pert_hours": {
+                    "optimistic": row.optimistic,
+                    "most_likely": row.most_likely,
+                    "pessimistic": row.pessimistic,
+                    "expected": row.expected,
+                },
+            }
+        )
+    epics = [{"title": epic, "tasks": tasks} for epic, tasks in epics_map.items()]
+    total_expected = sum(row.expected for row in rows)
+    total_expected = round_to_step(total_expected, 0.5)
+    return {
+        "llm_model": llm_model,
+        "epics": epics,
+        "totals": {"expected_hours": round(total_expected, 2)},
+    }
+
+
 class PresaleCreate(BaseModel):
     name: str = Field(..., min_length=1)
 
@@ -88,6 +154,34 @@ class DocumentAlternativeRequest(BaseModel):
 
 class ResultVersionRequest(BaseModel):
     result_json: dict
+
+
+class PertHours(BaseModel):
+    optimistic: float
+    most_likely: float
+    pessimistic: float
+    expected: float
+
+
+class StoryRowPayload(BaseModel):
+    id: str | None = None
+    epic: str
+    title: str
+    type: Literal["functional", "non_functional"]
+    role: Literal["SA/BA", "Backend", "Frontend", "Data-engineer", "DevOps"]
+    see: list[str]
+    do: list[str]
+    get: list[str]
+    acceptance: list[str]
+    pert_hours: PertHours
+
+
+class StoryRowsPatch(BaseModel):
+    rows: list[StoryRowPayload]
+
+
+class ReestimateRequest(BaseModel):
+    row_ids: list[str]
 
 
 @app.on_event("startup")
@@ -338,8 +432,28 @@ def get_result_view(
     result = db.scalar(query)
     if not result:
         return error_response(404, "document_not_found")
-    rows = build_result_rows(result.result_json)
-    total_expected = sum(float(row.get("expected", 0)) for row in rows)
+    story_rows = ensure_story_rows(db, document_id, result.version, result.result_json)
+    rows = [
+        {
+            "id": row.id,
+            "epic": row.epic,
+            "title": row.title,
+            "type": row.type,
+            "role": row.role,
+            "see": row.see,
+            "do": row.do,
+            "get": row.get,
+            "acceptance": row.acceptance,
+            "pert_hours": {
+                "optimistic": row.optimistic,
+                "most_likely": row.most_likely,
+                "pessimistic": row.pessimistic,
+                "expected": row.expected,
+            },
+        }
+        for row in story_rows
+    ]
+    total_expected = sum(float(row["pert_hours"]["expected"]) for row in rows)
     total_expected = round_to_step(total_expected, 0.5)
     return {
         "document_id": document.id,
@@ -422,6 +536,150 @@ def get_llm_debug(document_id: str, db: Annotated[Session, Depends(get_db)]):
             for entry in entries
         ],
     }
+
+
+@app.patch("/api/v1/documents/{document_id}/rows")
+def update_story_rows(
+    document_id: str, payload: StoryRowsPatch, db: Annotated[Session, Depends(get_db)]
+):
+    document = db.get(Document, document_id)
+    if not document:
+        return error_response(404, "document_not_found")
+    latest_result = db.scalar(
+        select(Result).where(Result.document_id == document_id).order_by(desc(Result.version))
+    )
+    if not latest_result:
+        return error_response(404, "document_not_found")
+    version = latest_result.version
+    db.query(StoryRow).filter(StoryRow.document_id == document_id, StoryRow.version == version).delete()
+    rows = []
+    for row in payload.rows:
+        row_id = row.id or str(uuid4())
+        rows.append(
+            StoryRow(
+                id=row_id,
+                document_id=document_id,
+                version=version,
+                epic=row.epic,
+                title=row.title,
+                type=row.type,
+                role=row.role,
+                see=row.see,
+                do=row.do,
+                get=row.get,
+                acceptance=row.acceptance,
+                optimistic=row.pert_hours.optimistic,
+                most_likely=row.pert_hours.most_likely,
+                pessimistic=row.pert_hours.pessimistic,
+                expected=row.pert_hours.expected,
+            )
+        )
+    db.add_all(rows)
+    db.commit()
+    return {"status": "ok"}
+
+
+@app.post("/api/v1/documents/{document_id}/reestimate")
+def reestimate_rows(
+    document_id: str, payload: ReestimateRequest, db: Annotated[Session, Depends(get_db)]
+):
+    document = db.get(Document, document_id)
+    if not document:
+        return error_response(404, "document_not_found")
+    latest_result = db.scalar(
+        select(Result).where(Result.document_id == document_id).order_by(desc(Result.version))
+    )
+    if not latest_result:
+        return error_response(404, "document_not_found")
+    version = latest_result.version
+    story_rows = ensure_story_rows(db, document_id, version, latest_result.result_json)
+    selected = [row for row in story_rows if row.id in payload.row_ids]
+    if not selected:
+        return error_response(400, "no_rows_selected")
+
+    prompt_rows = [
+        {
+            "id": row.id,
+            "epic": row.epic,
+            "title": row.title,
+            "role": row.role,
+            "type": row.type,
+            "see": row.see,
+            "do": row.do,
+            "get": row.get,
+            "acceptance": row.acceptance,
+            "pert_hours": {
+                "optimistic": row.optimistic,
+                "most_likely": row.most_likely,
+                "pessimistic": row.pessimistic,
+                "expected": row.expected,
+            },
+        }
+        for row in selected
+    ]
+    prompt = (
+        "Re-estimate ONLY the pert_hours for the selected rows. "
+        "Return ONLY a JSON array of objects with fields: id, pert_hours "
+        "(optimistic, most_likely, pessimistic, expected). No extra text.\n"
+        f"Rows:\n{prompt_rows}"
+    )
+    try:
+        raw = call_ollama(prompt)
+        updates = parse_llm_json(raw)
+    except Exception:
+        return error_response(500, "llm_error")
+    if not isinstance(updates, list):
+        return error_response(400, "llm_invalid_json")
+
+    update_map = {item.get("id"): item.get("pert_hours", {}) for item in updates if isinstance(item, dict)}
+
+    new_version = version + 1
+    new_rows = []
+    for row in story_rows:
+        pert = update_map.get(row.id)
+        optimistic = row.optimistic
+        most_likely = row.most_likely
+        pessimistic = row.pessimistic
+        if pert:
+            optimistic = float(pert.get("optimistic", optimistic))
+            most_likely = float(pert.get("most_likely", most_likely))
+            pessimistic = float(pert.get("pessimistic", pessimistic))
+        expected = (optimistic + 4 * most_likely + pessimistic) / 6
+        expected = round_to_step(expected, 0.5)
+        new_rows.append(
+            StoryRow(
+                id=str(uuid4()),
+                document_id=document_id,
+                version=new_version,
+                epic=row.epic,
+                title=row.title,
+                type=row.type,
+                role=row.role,
+                see=row.see,
+                do=row.do,
+                get=row.get,
+                acceptance=row.acceptance,
+                optimistic=optimistic,
+                most_likely=most_likely,
+                pessimistic=pessimistic,
+                expected=expected,
+            )
+        )
+    db.add_all(new_rows)
+    result_json = build_result_json_from_rows(new_rows, latest_result.llm_model)
+    result = Result(
+        id=str(uuid4()),
+        document_id=document_id,
+        version=new_version,
+        llm_model=latest_result.llm_model,
+        result_json=result_json,
+        raw_llm_output=None,
+        validation_error=None,
+        llm_prompt=prompt,
+    )
+    db.add(result)
+    db.commit()
+    return {"document_id": document_id, "version": new_version}
 
 
 @app.get("/api/v1/documents")

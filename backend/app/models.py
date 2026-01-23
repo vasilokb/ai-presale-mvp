@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -80,3 +80,24 @@ class LlmDebug(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     document = relationship("Document", back_populates="llm_debug_entries")
+
+
+class StoryRow(Base):
+    __tablename__ = "story_rows"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    document_id: Mapped[str] = mapped_column(String(36), ForeignKey("documents.id"), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    epic: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    see: Mapped[list] = mapped_column(JSON, nullable=False)
+    do: Mapped[list] = mapped_column(JSON, nullable=False)
+    get: Mapped[list] = mapped_column(JSON, nullable=False)
+    acceptance: Mapped[list] = mapped_column(JSON, nullable=False)
+    optimistic: Mapped[float] = mapped_column(Float, nullable=False)
+    most_likely: Mapped[float] = mapped_column(Float, nullable=False)
+    pessimistic: Mapped[float] = mapped_column(Float, nullable=False)
+    expected: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

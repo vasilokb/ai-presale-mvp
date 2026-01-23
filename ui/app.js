@@ -321,11 +321,12 @@ async function renderResultScreen(presaleId, documentId) {
     const totals = {};
     resultRows.forEach((row) => {
       const role = row.role || "Unknown";
+      const pert = row.pert_hours || {};
       if (!totals[role]) totals[role] = { optimistic: 0, most_likely: 0, pessimistic: 0, expected: 0 };
-      totals[role].optimistic += Number(row.optimistic || 0);
-      totals[role].most_likely += Number(row.most_likely || 0);
-      totals[role].pessimistic += Number(row.pessimistic || 0);
-      totals[role].expected += Number(row.expected || 0);
+      totals[role].optimistic += Number(pert.optimistic || 0);
+      totals[role].most_likely += Number(pert.most_likely || 0);
+      totals[role].pessimistic += Number(pert.pessimistic || 0);
+      totals[role].expected += Number(pert.expected || 0);
     });
     return Object.entries(totals).map(([role, values]) => ({ role, ...values }));
   };
@@ -392,15 +393,12 @@ async function renderResultScreen(presaleId, documentId) {
     });
     document.getElementById("saveBtn").addEventListener("click", async () => {
       recalcTotals();
-      const payload = { result_json: currentResult };
-      const saved = await fetchJson(`${API_BASE}/documents/${documentId}/result/version`, {
-        method: "POST",
+      await fetchJson(`${API_BASE}/documents/${documentId}/rows`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ rows: resultRows }),
       });
-      currentResult.version = saved.version;
-      document.getElementById("saveStatus").textContent = `Сохранено. Версия ${saved.version}.`;
-      renderResult();
+      document.getElementById("saveStatus").textContent = "Сохранено.";
     });
 
     document.getElementById("altButton").addEventListener("click", async () => {
@@ -421,9 +419,10 @@ async function renderResultScreen(presaleId, documentId) {
 
     document.getElementById("versionSelect").addEventListener("change", async (event) => {
       const version = event.target.value;
-      currentResult = await fetchJson(
-        `${API_BASE}/documents/${documentId}/result?version=${version}`
-      );
+      currentResult = await fetchJson(`${API_BASE}/documents/${documentId}/result?version=${version}`);
+      const view = await fetchJson(`${API_BASE}/documents/${documentId}/result-view?version=${version}`);
+      resultRows = view.rows || [];
+      currentResult.totals = view.totals;
       renderResult();
     });
 
@@ -517,28 +516,29 @@ async function renderResultScreen(presaleId, documentId) {
         <tbody>
           ${filteredRows
             .map((row, index) => {
+              const pert = row.pert_hours || {};
               if (editMode) {
                 return `
                   <tr>
                     <td>${row.epic || ""}</td>
-                    <td>${row.task || ""}</td>
+                    <td>${row.title || ""}</td>
                     <td>${row.role || ""}</td>
-                    <td><input type="number" data-index="${index}" data-field="optimistic" value="${row.optimistic ?? 0}" /></td>
-                    <td><input type="number" data-index="${index}" data-field="most_likely" value="${row.most_likely ?? 0}" /></td>
-                    <td><input type="number" data-index="${index}" data-field="pessimistic" value="${row.pessimistic ?? 0}" /></td>
-                    <td>${row.expected ?? 0}</td>
+                    <td><input type="number" data-index="${index}" data-field="optimistic" value="${pert.optimistic ?? 0}" /></td>
+                    <td><input type="number" data-index="${index}" data-field="most_likely" value="${pert.most_likely ?? 0}" /></td>
+                    <td><input type="number" data-index="${index}" data-field="pessimistic" value="${pert.pessimistic ?? 0}" /></td>
+                    <td>${pert.expected ?? 0}</td>
                   </tr>
                 `;
               }
               return `
                 <tr>
                   <td>${row.epic || ""}</td>
-                  <td>${row.task || ""}</td>
+                  <td>${row.title || ""}</td>
                   <td>${row.role || ""}</td>
-                  <td>${row.optimistic ?? 0}</td>
-                  <td>${row.most_likely ?? 0}</td>
-                  <td>${row.pessimistic ?? 0}</td>
-                  <td>${row.expected ?? 0}</td>
+                  <td>${pert.optimistic ?? 0}</td>
+                  <td>${pert.most_likely ?? 0}</td>
+                  <td>${pert.pessimistic ?? 0}</td>
+                  <td>${pert.expected ?? 0}</td>
                 </tr>
               `;
             })
@@ -553,12 +553,13 @@ async function renderResultScreen(presaleId, documentId) {
           const index = Number(event.target.dataset.index);
           const field = event.target.dataset.field;
           const row = filteredRows[index];
-          row[field] = Number(event.target.value);
-          const optimistic = Number(row.optimistic || 0);
-          const mostLikely = Number(row.most_likely || 0);
-          const pessimistic = Number(row.pessimistic || 0);
+          row.pert_hours = row.pert_hours || {};
+          row.pert_hours[field] = Number(event.target.value);
+          const optimistic = Number(row.pert_hours.optimistic || 0);
+          const mostLikely = Number(row.pert_hours.most_likely || 0);
+          const pessimistic = Number(row.pert_hours.pessimistic || 0);
           const expected = (optimistic + 4 * mostLikely + pessimistic) / 6;
-          row.expected = Number((Math.round(expected / 0.5) * 0.5).toFixed(2));
+          row.pert_hours.expected = Number((Math.round(expected / 0.5) * 0.5).toFixed(2));
           recalcTotals();
         });
       });
@@ -568,7 +569,7 @@ async function renderResultScreen(presaleId, documentId) {
   const recalcTotals = () => {
     let total = 0;
     resultRows.forEach((row) => {
-      total += Number(row.expected || 0);
+      total += Number(row.pert_hours?.expected || 0);
     });
     currentResult.totals = { expected_hours: Number(total.toFixed(2)) };
   };
