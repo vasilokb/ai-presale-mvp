@@ -61,6 +61,17 @@ def extract_txt_text(content: bytes) -> str:
             raise ValueError("txt_decode_failed") from exc
 
 
+HEADER_TITLES = {
+    "Входные данные",
+    "Выходные данные",
+    "Функциональные требования",
+    "Нефункциональные требования",
+    "Критерии приёмки",
+    "Пользовательский сценарий",
+    "Источники данных",
+}
+
+
 def extract_json_object(text: str) -> dict:
     try:
         return parse_llm_json(text)
@@ -104,6 +115,48 @@ def limit_prompt_text(text: str, max_chars: int = 12000) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars]
+
+
+def normalize_role(role: str) -> str:
+    mapping = {
+        "BA": "SA/BA",
+        "SA": "SA/BA",
+        "SA/BA": "SA/BA",
+        "Data": "Data-engineer",
+        "Data-engineer": "Data-engineer",
+        "Data Engineer": "Data-engineer",
+    }
+    return mapping.get(role, role)
+
+
+def apply_role_normalization(llm_json: dict) -> None:
+    for epic in llm_json.get("epics", []):
+        for task in epic.get("tasks", []):
+            role = task.get("role")
+            if isinstance(role, str):
+                task["role"] = normalize_role(role)
+
+
+def is_task_title_low_quality(title: str) -> bool:
+    normalized = title.strip()
+    if not normalized:
+        return True
+    if normalized.endswith(":"):
+        return True
+    if normalized in HEADER_TITLES:
+        return True
+    if len(normalized.split()) < 4:
+        return True
+    return False
+
+
+def has_low_quality_titles(llm_json: dict) -> bool:
+    for epic in llm_json.get("epics", []):
+        for task in epic.get("tasks", []):
+            title = task.get("title", "")
+            if isinstance(title, str) and is_task_title_low_quality(title):
+                return True
+    return False
 
 
 def log_llm_output(document_id: str, attempt: int, raw_output: str | None) -> None:
@@ -258,12 +311,10 @@ def process_document(document_id: str) -> None:
                     return
 
                 if llm_json is not None:
-                    try:
-                        validate(instance=llm_json, schema=schema)
-                        break
-                    except ValidationError:
-                        last_error = "llm_schema_validation_failed"
-                        validation_error = "llm_schema_validation_failed"
+                    apply_role_normalization(llm_json)
+                    llm_json["llm_model"] = settings.ollama_model
+                    if has_low_quality_titles(llm_json):
+                        last_error = "llm_quality_gate_failed"
                         save_llm_debug(
                             db,
                             document.id,
@@ -271,11 +322,28 @@ def process_document(document_id: str) -> None:
                             prompt,
                             raw_output,
                             last_error,
-                            "schema_validation_failed",
+                            "low_quality_titles",
                         )
+                    else:
+                        try:
+                            validate(instance=llm_json, schema=schema)
+                            break
+                        except ValidationError:
+                            last_error = "llm_schema_validation_failed"
+                            validation_error = "llm_schema_validation_failed"
+                            save_llm_debug(
+                                db,
+                                document.id,
+                                attempt_number,
+                                prompt,
+                                raw_output,
+                                last_error,
+                                "schema_validation_failed",
+                            )
 
                 repair_prompt = (
                     "Return ONLY corrected JSON that matches the schema EXACTLY. No other text.\n"
+                    "Replace section headers with concrete implementation tasks. Each task must be an actionable work item.\n"
                     f"Schema:\n{schema_text}\n"
                     "You MUST strictly follow this structure exactly as shown:\n"
                     f"{JSON_SKELETON}\n"
@@ -339,6 +407,7 @@ def process_document(document_id: str) -> None:
                     total_expected += pert["expected"]
 
             llm_json["totals"] = {"expected_hours": round(total_expected, 2)}
+            llm_json["llm_model"] = settings.ollama_model
 
             update_document_status(db, document, "running", 90, "saving_result")
             result = Result(
