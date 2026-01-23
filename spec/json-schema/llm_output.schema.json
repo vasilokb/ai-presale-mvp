@@ -18,20 +18,28 @@
               "required": ["title", "role", "pert_hours"],
               "properties": {
                 "title": { "type": "string", "minLength": 1 },
-                "role": { "type": "string", "enum": ["Backend","Frontend","BA","DevOps","Data"] },
+                "role": { "type": "string", "enum": ["SA/BA","Backend","Frontend","Data-engineer","DevOps"] },
                 "pert_hours": {
                   "type": "object",
-                  "required": ["optimistic","most_likely","pessimistic"],
+                  "required": ["optimistic","most_likely","pessimistic","expected"],
                   "properties": {
                     "optimistic": { "type": "number", "minimum": 0 },
                     "most_likely": { "type": "number", "minimum": 0 },
-                    "pessimistic": { "type": "number", "minimum": 0 }
+                    "pessimistic": { "type": "number", "minimum": 0 },
+                    "expected": { "type": "number", "minimum": 0 }
                   }
                 }
               }
             }
           }
         }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "required": ["expected_hours"],
+      "properties": {
+        "expected_hours": { "type": "number", "minimum": 0 }
       }
     }
   }
